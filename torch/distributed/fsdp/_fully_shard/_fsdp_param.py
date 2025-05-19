@@ -25,6 +25,8 @@ from ._fsdp_common import (
     compiled_autograd_enabled,
     FSDPMeshInfo,
     HSDPMeshInfo,
+    _USE_SM_ALL_GATHER_DIRECT,
+    _USE_SM_MULTIMEM_ALL_GATHER_OUT,
 )
 
 
@@ -682,9 +684,12 @@ class FSDPParam:
             ):
                 sharded_local_tensor = self._sharded_local_tensor
                 if self.offload_to_cpu:
-                    sharded_local_tensor = sharded_local_tensor.to(
-                        self.device, non_blocking=True
-                    )
+                    # XXX: cpu -> cuda
+                    if not _USE_SM_ALL_GATHER_DIRECT and not _USE_SM_MULTIMEM_ALL_GATHER_OUT:
+                        # sharded_local_tensor = sharded_local_tensor.to(
+                        #     self.device, non_blocking=True
+                        # )
+                        pass
                 pre_all_gather_signature = inspect.signature(
                     sharded_local_tensor.fsdp_pre_all_gather
                 )
@@ -738,9 +743,12 @@ class FSDPParam:
                 return [t.view(-1) for t in all_gather_inputs]
             sharded_param_data = self._sharded_param_data
             if self.offload_to_cpu:
-                sharded_param_data = sharded_param_data.to(
-                    self.device, non_blocking=True
-                )
+                # XXX: cpu -> cuda
+                if not _USE_SM_ALL_GATHER_DIRECT and not _USE_SM_MULTIMEM_ALL_GATHER_OUT:
+                    pass
+                    # sharded_param_data = sharded_param_data.to(
+                    #     self.device, non_blocking=True
+                    # )
             return [_to_dtype_if_needed(sharded_param_data, self.param_dtype)]
         elif self.sharded_state == ShardedState.SHARDED_POST_FORWARD:
             if not compiled_autograd_enabled() and hasattr(
