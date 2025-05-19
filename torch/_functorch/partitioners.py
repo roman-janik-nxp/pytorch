@@ -517,6 +517,9 @@ def calculate_range(dtype: torch.dtype) -> tuple:
         # 8-bit floating-point format with e5m2 layout
         min_val = -57344.0
         max_val = 57344.0
+    elif dtype == torch.float8_e4m3fn:
+        min_val = -448
+        max_val = 448
     else:
         raise ValueError(f"Unsupported dtype: {dtype}")
     return min_val, max_val
@@ -535,7 +538,7 @@ def quantize_activation_fw(graph: torch.fx.Graph) -> None:
             # case: use scaling
             if torch._inductor.config.post_grad_fusion_options[
                 "activation_quantization_aten_pass"
-            ].get("use_scaling", False):
+            ].get("use_scaling", True):
                 # calculating the scale
                 scale_node = calculate_quantization_scaling(
                     graph, node, clamp_max, 1e-12
@@ -601,6 +604,7 @@ def quantize_activation_bw(graph: torch.fx.Graph) -> None:
                         for bwd_input in bw_inputs
                         if bwd_input.name == scale_name
                     )
+                with graph.inserting_after(scale_node):
                     activation_node = graph.call_function(
                         torch.ops.prims.convert_element_type.default,
                         args=(node, dequant_type),
@@ -613,7 +617,7 @@ def quantize_activation_bw(graph: torch.fx.Graph) -> None:
                     activation_node.meta["tensor_meta"] = extract_tensor_metadata(
                         activation_node.meta["val"]
                     )
-                with graph.inserting_after(scale_node):
+                with graph.inserting_after(activation_node):
                     divided_target_node_32 = graph.call_function(
                         torch.ops.aten.div.Tensor,
                         args=(activation_node, scale_node),
@@ -725,6 +729,17 @@ def enable_activation_quantization(
         ),
     )
 
+    trace_structured(
+        "artifact",
+        metadata_fn=lambda: {
+            "name": "before_activation_quantization_bwd_aten_pass",
+            "encoding": "string",
+        },
+        payload_fn=lambda: bwd_module.print_readable(
+            print_output=False, include_stride=True, include_device=True
+        ),
+    )
+
     quant_fwd_module_outputs = fwd_module.graph.find_nodes(op="output")[0].args[0]
     # update the corresponding bwd_inputs due to the fwd_outputs quantization
     for fwd_node in quant_fwd_module_outputs:
@@ -741,10 +756,11 @@ def enable_activation_quantization(
     # update the bwd_inputs if quantization with scaling is used
     if torch._inductor.config.post_grad_fusion_options[
         "activation_quantization_aten_pass"
-    ].get("use_scaling", False):
+    ].get("use_scaling", True):
+        quant_bwd_module_inputs = list(bwd_module.graph.find_nodes(op="placeholder"))
         # update the corresponding bwd input nodes find the last non-tangent node
-        bwd_input_loc = list(bwd_module_inputs.values())[-1]
-        for bw_input in reversed(bwd_module_inputs.values()):
+        bwd_input_loc = quant_bwd_module_inputs[-1]
+        for bw_input in reversed(quant_bwd_module_inputs):
             if not _is_tangent(bw_input):
                 bwd_input_loc = bw_input
                 break
@@ -757,17 +773,6 @@ def enable_activation_quantization(
                     scale_bwd_input = bwd_module.graph.placeholder(name=fwd_node.name)
                 scale_bwd_input.meta.update(fwd_node.meta)
                 bwd_input_loc = scale_bwd_input
-
-    trace_structured(
-        "artifact",
-        metadata_fn=lambda: {
-            "name": "before_activation_quantization_bwd_aten_pass",
-            "encoding": "string",
-        },
-        payload_fn=lambda: bwd_module.print_readable(
-            print_output=False, include_stride=True, include_device=True
-        ),
-    )
 
     quantize_activation_bw(bwd_module.graph)
 
