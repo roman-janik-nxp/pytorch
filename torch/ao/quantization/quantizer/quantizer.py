@@ -111,7 +111,7 @@ class DerivedQuantizationSpec(QuantizationSpecBase):
 
 @dataclass
 class QuantizationAnnotation:
-    """How are input arguemnt or output should be quantized,
+    """How input or output arguments should be quantized,
     expressed as QuantizationSpec, this corresponds to how a Tensor in the
     operator Graph is observed (PTQ) or fake quantized (QAT)
     """
@@ -121,9 +121,11 @@ class QuantizationAnnotation:
         default_factory=dict
     )
 
-    # How the output of this node is quantized, expressed as QuantizationSpec
+    # a map from torch.fx.Node to a type of QuantizationSpecBase
     # TODO: change the value to QuantizationSpec in a separate PR
-    output_qspec: Optional[QuantizationSpecBase] = None
+    output_qspec_map: Dict[Node, Optional[QuantizationSpecBase]] = field(
+        default_factory=dict
+    )
 
     # For a Node: node1 and edge: (node1, node2), since they are observing the same
     # Tensor, we may want to implicitly share observers, this flag allows people to

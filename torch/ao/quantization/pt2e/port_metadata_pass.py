@@ -208,8 +208,9 @@ class PortNodeMetaForQDQ(PassBase):
             annotation = node.meta.get("quantization_annotation", None)
             if _is_valid_annotation(annotation):
                 input_qspec_map = node.meta["quantization_annotation"].input_qspec_map
-                output_qspec = node.meta["quantization_annotation"].output_qspec
+                output_qspec_map = node.meta["quantization_annotation"].output_qspec_map
                 for input_node, qspec in input_qspec_map.items():
                     _port_metadata_for_input_quant_nodes(input_node, node, qspec)
-                _port_metadata_for_output_quant_nodes(node, output_qspec)
+                for output_node, qspec in output_qspec_map.items():
+                    _port_metadata_for_input_quant_nodes(output_node, node, qspec)
         return PassResult(graph_module, True)
